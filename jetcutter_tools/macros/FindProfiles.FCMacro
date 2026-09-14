@@ -1,0 +1,1005 @@
+# ============================================================================
+# AddJob.FCMacro
+# ============================================================================
+# DESCRIPTION
+#   Creates Profile operations for internal edges (holes/pockets) on the top
+#   faces of a CAM Job model.  A single dialog collects the tool, offset side,
+#   and cut direction before any operations are created.
+#
+# USAGE
+#   1. Open the CAM workbench.
+#   2. Select the CAM Job object in the tree view.
+#   3. Run this macro (Macro -> Run Macro -> AddJob.FCMacro).
+#   4. In the dialog, select:
+#        - Tool          : a ToolController from the Job's Tools folder.
+#        - Offset Side   : Inside / Outside / None.
+#        - Cut Direction : CW / CCW.
+#        - LeadInOut settings and concave detection checkbox.
+#   5. Click OK to create Profile operations -- one per internal wire loop
+#      and one per concave indentation found in the outer wire.
+#
+# PREREQUISITES
+#   - A CAM Job must exist with:
+#       * A Model folder containing at least one geometry clone.
+#       * A Tools folder containing at least one ToolController.
+#   - The model must have top-facing flat planes (normal approx +Z).
+#   - The Job's Model folder should already contain cloned geometry
+#     (created by the Job's "Add Model" workflow).
+#
+# BEHAVIOUR
+#   - Internal wire loops (holes / pockets) are processed.
+#     The outer perimeter wire of each face is skipped.
+#   - Concave indentations in the outer wire are detected and processed.
+#     Each connected chain of edges forming a concave feature becomes
+#     a separate Profile operation.
+#   - One Profile operation is created per internal closed wire and
+#     per concave indentation chain.
+#   - A DressupLeadInOut is automatically added to each Profile operation
+#     with user-configurable LeadIn, LeadOut, Style, and Length settings.
+#   - Operations are created silently (no TaskPanel dialogs).
+#   - Each operation receives the user-selected Tool, Side, Direction,
+#     and default depth/height values.
+#
+# DEFAULT SETTINGS
+#   - Offset Side       : Inside
+#   - Cut Direction     : CCW
+#   - Lead In           : Enabled
+#   - Lead Out          : Disabled
+#   - Lead In/Out Style : Perpendicular
+#   - Lead Length       : 3 × Tool Diameter
+#   - ClearanceHeight   : 5.0
+#   - SafeHeight        : 3.0
+#   - StartDepth        : 0.0
+#   - StepDown          : 1.0
+#   - FinalDepth        : -2.0
+#
+# AUTHOR / DATE
+#   FreeCAD CAM community
+# ============================================================================
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Path
+import PathScripts.PathUtils as PathUtils
+import Path.Op.Profile
+import Path.Op.Gui.Base as PathOpGui
+import Path.Dressup.Gui.LeadInOut as LeadInOutDressup
+from Path.Dressup import Utils as PathDressup
+from PySide.QtGui import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QSizePolicy, QCheckBox, QDoubleSpinBox, QGroupBox
+from PySide.QtCore import Qt
+
+
+# ============================================================================
+# show_profile_settings_dialog
+# ============================================================================
+# Displays a modal dialog that lets the user select the Tool, Offset Side,
+# Cut Direction, and LeadInOut dressup settings that will be applied to
+# every generated Profile operation.
+#
+# Returns: dict with keys: tool, side, direction, leadIn, leadOut,
+#          styleIn, styleOut, lengthMultiplier on Accept;
+#          None on Cancel.
+# ============================================================================
+def show_profile_settings_dialog(job):
+    """Show a dialog to select Tool, Offset Side, Cut Direction, and LeadInOut settings."""
+    tools_folder = None
+    for obj in job.OutList:
+        if obj.Name.startswith("Tools") or obj.Label.startswith("Tools"):
+            tools_folder = obj
+            break
+
+    tool_names = []
+    tool_objects = []
+    if tools_folder and hasattr(tools_folder, "Group"):
+        for tc in tools_folder.Group:
+            if "ToolController" in tc.Proxy.__class__.__name__:
+                tool_names.append(tc.Label)
+                tool_objects.append(tc)
+
+    if not tool_names:
+        App.Console.PrintError("No ToolControllers found in the Job.\n")
+        return None
+
+    dialog = QDialog(Gui.getMainWindow())
+    dialog.setWindowTitle("Profile Operation Settings")
+    dialog.setModal(True)
+
+    layout = QVBoxLayout(dialog)
+
+    # Tool selection
+    tool_layout = QHBoxLayout()
+    tool_layout.addWidget(QLabel("Tool:"))
+    tool_combo = QComboBox()
+    tool_combo.addItems(tool_names)
+    tool_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    tool_layout.addWidget(tool_combo)
+    layout.addLayout(tool_layout)
+
+    # Offset Side selection
+    side_layout = QHBoxLayout()
+    side_layout.addWidget(QLabel("Offset Side:"))
+    side_combo = QComboBox()
+    side_combo.addItems(["Inside", "Outside", "None"])
+    side_combo.setCurrentIndex(0)
+    side_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    side_layout.addWidget(side_combo)
+    layout.addLayout(side_layout)
+
+    # Cut Direction selection
+    dir_layout = QHBoxLayout()
+    dir_layout.addWidget(QLabel("Cut Direction:"))
+    dir_combo = QComboBox()
+    dir_combo.addItems(["CW", "CCW"])
+    dir_combo.setCurrentIndex(1)
+    dir_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    dir_layout.addWidget(dir_combo)
+    layout.addLayout(dir_layout)
+
+    # LeadInOut Dressup section
+    leadin_group = QGroupBox("LeadInOut Dressup")
+    leadin_layout = QVBoxLayout()
+
+    # Lead In row
+    leadin_row = QHBoxLayout()
+    leadin_check = QCheckBox()
+    leadin_check.setChecked(True)
+    leadin_style_combo = QComboBox()
+    leadin_style_combo.addItems(LeadInOutDressup.lead_styles)
+    leadin_style_combo.setCurrentIndex(LeadInOutDressup.lead_styles.index("Perpendicular"))
+    leadin_row.addWidget(QLabel("Lead In:"))
+    leadin_row.addWidget(leadin_check)
+    leadin_row.addSpacing(15)
+    leadin_row.addWidget(QLabel("Style:"))
+    leadin_row.addWidget(leadin_style_combo)
+    leadin_row.addStretch()
+    leadin_layout.addLayout(leadin_row)
+
+    # Lead Out row
+    leadout_row = QHBoxLayout()
+    leadout_check = QCheckBox()
+    leadout_check.setChecked(False)
+    leadout_style_combo = QComboBox()
+    leadout_style_combo.addItems(LeadInOutDressup.lead_styles)
+    leadout_style_combo.setCurrentIndex(LeadInOutDressup.lead_styles.index("Perpendicular"))
+    leadout_row.addWidget(QLabel("Lead Out:"))
+    leadout_row.addWidget(leadout_check)
+    leadout_row.addSpacing(15)
+    leadout_row.addWidget(QLabel("Style:"))
+    leadout_row.addWidget(leadout_style_combo)
+    leadout_row.addStretch()
+    leadin_layout.addLayout(leadout_row)
+
+    # Length row
+    length_row = QHBoxLayout()
+    length_spin = QDoubleSpinBox()
+    length_spin.setRange(0.01, 100.0)
+    length_spin.setDecimals(2)
+    length_spin.setValue(3.0)
+    length_spin.setSingleStep(0.1)
+    length_row.addWidget(QLabel("Length:"))
+    length_row.addWidget(length_spin)
+    length_row.addWidget(QLabel("× Tool Diameter"))
+    length_row.addStretch()
+    leadin_layout.addLayout(length_row)
+
+    leadin_group.setLayout(leadin_layout)
+    layout.addWidget(leadin_group)
+
+    # Interactivity: disable style dropdowns when checkbox is unchecked
+    def on_leadin_state_changed(state):
+        leadin_style_combo.setEnabled(state == Qt.Checked)
+
+    def on_leadout_state_changed(state):
+        leadout_style_combo.setEnabled(state == Qt.Checked)
+
+    leadin_check.stateChanged.connect(on_leadin_state_changed)
+    leadout_check.stateChanged.connect(on_leadout_state_changed)
+
+    # Initial state
+    leadin_style_combo.setEnabled(True)
+    leadout_style_combo.setEnabled(False)
+
+    # Concave detection checkbox
+    concave_layout = QHBoxLayout()
+    concave_check = QCheckBox()
+    concave_check.setChecked(True)
+    concave_layout.addStretch()
+    concave_layout.addWidget(concave_check)
+    concave_layout.addWidget(QLabel("Detect concave indentations in outer wire"))
+    layout.addLayout(concave_layout)
+
+    # Concave depth threshold
+    depth_layout = QHBoxLayout()
+    depth_spin = QDoubleSpinBox()
+    depth_spin.setRange(0.1, 100.0)
+    depth_spin.setValue(5.0)
+    depth_spin.setSuffix(" mm")
+    depth_spin.setDecimals(1)
+    depth_layout.addStretch()
+    depth_layout.addWidget(depth_spin)
+    depth_layout.addWidget(QLabel("Min depth for concave detection"))
+    layout.addLayout(depth_layout)
+
+    # Button row
+    button_layout = QHBoxLayout()
+    ok_button = QPushButton("OK")
+    cancel_button = QPushButton("Cancel")
+    button_layout.addStretch()
+    button_layout.addWidget(ok_button)
+    button_layout.addWidget(cancel_button)
+    layout.addLayout(button_layout)
+
+    # Default values
+    selected = {
+        "tool": tool_objects[0],
+        "side": "Inside",
+        "direction": "CCW",
+        "accepted": False,
+        "leadIn": True,
+        "leadOut": False,
+        "styleIn": "Perpendicular",
+        "styleOut": "Perpendicular",
+        "lengthMultiplier": 3.0,
+        "concaveDetection": True,
+        "concaveDepthTol": 5.0,
+    }
+
+    def on_ok():
+        selected["accepted"] = True
+        selected["tool"] = tool_objects[tool_combo.currentIndex()]
+        selected["side"] = side_combo.currentText()
+        selected["direction"] = dir_combo.currentText()
+        selected["leadIn"] = leadin_check.isChecked()
+        selected["leadOut"] = leadout_check.isChecked()
+        selected["styleIn"] = leadin_style_combo.currentText()
+        selected["styleOut"] = leadout_style_combo.currentText()
+        selected["lengthMultiplier"] = length_spin.value()
+        selected["concaveDetection"] = concave_check.isChecked()
+        selected["concaveDepthTol"] = depth_spin.value()
+        dialog.accept()
+
+    def on_cancel():
+        dialog.reject()
+
+    ok_button.clicked.connect(on_ok)
+    cancel_button.clicked.connect(on_cancel)
+
+    if dialog.exec() == QDialog.Accepted:
+        App.Console.PrintMessage(
+            "  [DIALOG] User accepted: tool='{}', side='{}', dir='{}', "
+            "leadIn={}, leadOut={}, styleIn={}, styleOut={}, lengthMult={}, "
+            "concave={}, concaveDepthTol={}\n".format(
+                selected["tool"].Name if selected["tool"] else "None",
+                selected["side"],
+                selected["direction"],
+                selected["leadIn"],
+                selected["leadOut"],
+                selected["styleIn"],
+                selected["styleOut"],
+                selected["lengthMultiplier"],
+                selected["concaveDetection"],
+                selected["concaveDepthTol"]
+            )
+        )
+        return selected
+
+    App.Console.PrintMessage("  [DIALOG] User cancelled\n")
+    return None
+
+
+# ============================================================================
+# add_leadinout_dressup
+# ============================================================================
+# Creates a DressupLeadInOut on the given profile operation and configures
+# it with user-provided LeadIn, LeadOut, Style, and Length settings.
+# ============================================================================
+def add_leadinout_dressup(profile_op, leadIn=True, leadOut=False, styleIn="Perpendicular",
+                          styleOut="Perpendicular", lengthMultiplier=3.0):
+    """Add and configure a DressupLeadInOut dressup for the given profile op."""
+    try:
+        App.Console.PrintMessage(
+            "  [DRESSUP] Creating dressup for op='{}', leadIn={}, leadOut={}, "
+            "styleIn={}, styleOut={}, lengthMult={}\n".format(
+                profile_op.Name, leadIn, leadOut, styleIn, styleOut, lengthMultiplier
+            )
+        )
+        dressup = LeadInOutDressup.Create(profile_op, mode=2)
+        if dressup is None:
+            App.Console.PrintError("  [DRESSUP] Create() returned None!\n")
+            return None
+        App.Console.PrintMessage(
+            "  [DRESSUP] Created dressup object: {}\n".format(dressup.Name)
+        )
+        dressup.LeadIn = leadIn
+        dressup.LeadOut = leadOut
+        dressup.StyleIn = styleIn
+        dressup.StyleOut = styleOut
+        App.Console.PrintMessage(
+            "  [DRESSUP] Set LeadIn={}, LeadOut={}, StyleIn={}, StyleOut={}\n".format(
+                dressup.LeadIn, dressup.LeadOut, dressup.StyleIn, dressup.StyleOut
+            )
+        )
+
+        # Set RadiusIn and RadiusOut via expression so they update
+        # dynamically if the tool diameter changes.
+        baseOp = PathDressup.baseOp(dressup.Base)
+        if baseOp and getattr(baseOp, "ToolController", None):
+            toolDiameter = baseOp.ToolController.Tool.Diameter.Value
+            expr = "{}.ToolController.Tool.Diameter.Value*{}".format(
+                baseOp.Name, lengthMultiplier)
+            actualLength = toolDiameter * lengthMultiplier
+            App.Console.PrintMessage(
+                "  [DRESSUP] Tool diameter={}, multiplier={}, actualLength={}\n".format(
+                    toolDiameter, lengthMultiplier, actualLength
+                )
+            )
+            dressup.setExpression("RadiusIn", expr)
+            dressup.setExpression("RadiusOut", expr)
+            App.Console.PrintMessage(
+                "  [DRESSUP] Set expressions: RadiusIn={}, RadiusOut={}\n".format(
+                    dressup.RadiusIn, dressup.RadiusOut
+                )
+            )
+        else:
+            dressup.RadiusIn = lengthMultiplier
+            dressup.RadiusOut = lengthMultiplier
+            App.Console.PrintMessage(
+                "  [DRESSUP] No tool controller found, set RadiusIn={}, RadiusOut={} (raw)\n".format(
+                    lengthMultiplier, lengthMultiplier
+                )
+            )
+
+        App.Console.PrintMessage(
+            "  [DRESSUP] Final: RadiusIn={}, RadiusOut={}\n".format(
+                dressup.RadiusIn, dressup.RadiusOut
+            )
+        )
+        return dressup
+    except Exception as e:
+        App.Console.PrintError("  [DRESSUP] ERROR: {}\n".format(e))
+        import traceback
+        App.Console.PrintError(traceback.format_exc())
+        return None
+
+
+# ============================================================================
+# is_concave_corner
+# ============================================================================
+# Check if the vertex shared by two consecutive edges in a wire is a
+# concave corner (pointing inward relative to the face).
+# For a +Z face (normal pointing up):
+#   - deflection < 0 (right turn) = concave (indentation)
+#   - deflection > 0 (left turn) = convex (main boundary)
+# ============================================================================
+def is_concave_indentation(edge, bb_min_x, bb_max_x, bb_min_y, bb_max_y, depth_tol):
+    """Check if an edge is a concave indentation.
+
+    An edge is concave if ANY vertex is deep inside the bounding box
+    (more than depth_tol from the nearest boundary), meaning it's not
+    purely on the outer perimeter.
+    """
+    try:
+        verts = edge.Vertexes
+        if not verts:
+            return False
+
+        any_deep = False
+        for v in verts:
+            dist = min(
+                v.X - bb_min_x,
+                bb_max_x - v.X,
+                v.Y - bb_min_y,
+                bb_max_y - v.Y
+            )
+            if dist > depth_tol:
+                any_deep = True
+                break
+
+        return any_deep
+    except Exception:
+        return False
+
+
+def find_concave_chains(wire, face_normal, concave_depth_tol=5.0):
+    """Find edge chains forming concave indentations in a wire.
+
+    Strategy: project edges to 2D, find the bounding box of the wire,
+    then identify edges that are NOT on the bounding box perimeter.
+    These interior edges are concave indentations.
+    """
+    try:
+        App.Console.PrintMessage("  [CONCAVE_CHAINS] Starting concave chain detection\n")
+        edges = wire.Edges
+        App.Console.PrintMessage(
+            "  [CONCAVE_CHAINS] Wire has {} edges, normal_z={:.6f}\n".format(
+                len(edges), face_normal.z
+            )
+        )
+        if len(edges) < 2:
+            App.Console.PrintMessage("  [CONCAVE_CHAINS] Not enough edges (< 2), returning []\n")
+            return []
+
+        # Compute 2D bounding box of the wire
+        bb_min_x = bb_min_y = float('inf')
+        bb_max_x = bb_max_y = float('-inf')
+        for edge in edges:
+            for v in edge.Vertexes:
+                bb_min_x = min(bb_min_x, v.X)
+                bb_max_x = max(bb_max_x, v.X)
+                bb_min_y = min(bb_min_y, v.Y)
+                bb_max_y = max(bb_max_y, v.Y)
+
+        App.Console.PrintMessage(
+            "  [CONCAVE_CHAINS] Bounding box: x=[{:.2f}, {:.2f}], y=[{:.2f}, {:.2f}], concaveDepthTol={:.1f}\n".format(
+                bb_min_x, bb_max_x, bb_min_y, bb_max_y, concave_depth_tol
+            )
+        )
+
+        # Classify each edge: concave indentation or boundary
+        concave_indices = []
+        for i, edge in enumerate(edges):
+            is_concave = is_concave_indentation(edge, bb_min_x, bb_max_x, bb_min_y, bb_max_y, concave_depth_tol)
+            if is_concave:
+                concave_indices.append(i)
+            App.Console.PrintMessage(
+                "  [CONCAVE] Edge{}: index={}, concave={}\n".format(
+                    i + 1, i, is_concave
+                )
+            )
+
+        App.Console.PrintMessage(
+            "  [CONCAVE_CHAINS] Found {} concave edge(s) at indices: {}\n".format(
+                len(concave_indices), concave_indices
+            )
+        )
+        App.Console.PrintMessage(
+            "  [CONCAVE_CHAINS] Boundary edges: {}, Concave edges: {}\n".format(
+                len(edges) - len(concave_indices), len(concave_indices)
+            )
+        )
+
+        if len(concave_indices) < 2:
+            App.Console.PrintMessage("  [CONCAVE_CHAINS] Need at least 2 concave edges, returning []\n")
+            return []
+
+        # Group consecutive concave indices into chains
+        chains = []
+        current_chain = [concave_indices[0]]
+        for j in range(1, len(concave_indices)):
+            if concave_indices[j] == concave_indices[j - 1] + 1:
+                current_chain.append(concave_indices[j])
+            else:
+                if len(current_chain) >= 2:
+                    chains.append([edges[idx] for idx in current_chain])
+                current_chain = [concave_indices[j]]
+        # Don't forget the last chain
+        if len(current_chain) >= 2:
+            chains.append([edges[idx] for idx in current_chain])
+
+        # Also check if the wire wraps around (last and first indices are consecutive)
+        if concave_indices[0] == len(edges) - 1 and concave_indices[1] == 0:
+            wrap_chain = [edges[idx] for idx in concave_indices]
+            App.Console.PrintMessage(
+                "  [CONCAVE_CHAINS] Full-wire wrap: {} edges\n".format(len(wrap_chain))
+            )
+            chains = [wrap_chain]
+
+        App.Console.PrintMessage(
+            "  [CONCAVE_CHAINS] Returning {} valid chain(s)\n".format(len(chains))
+        )
+        return chains
+    except Exception as e:
+        App.Console.PrintError("  [CONCAVE_CHAINS] ERROR: {}\n".format(e))
+        import traceback
+        App.Console.PrintError(traceback.format_exc())
+        return []
+
+
+# ============================================================================
+# create_profile_ops_for_top_loops
+# ============================================================================
+# Main entry point.  Walks through the selected CAM Job, finds top-facing
+# faces, extracts internal wire loops, and creates Profile operations for
+# each loop.
+# ============================================================================
+def create_profile_ops_for_top_loops():
+    App.Console.PrintMessage("=== MACRO START ===\n")
+    # Step 1: Capture the selected CAM Job from the tree view.
+    selection_ex = Gui.Selection.getSelectionEx()
+    if not selection_ex:
+        App.Console.PrintError("Please select a CAM Job in the tree first.\n")
+        return
+
+    job = selection_ex[0].Object
+    App.Console.PrintMessage("  Selected job: '{}' (type: {})\n".format(job.Name, type(job).__name__))
+
+    if not hasattr(job, "Proxy") or "Job" not in job.Proxy.__class__.__name__:
+        App.Console.PrintError("Selected object is not a CAM Job.\n")
+        return
+
+    # Step 2: Locate the Model folder and build a list of geometry clones.
+    model_folder = None
+    for obj in job.OutList:
+        if obj.Name.startswith("Model") or obj.Label.startswith("Model"):
+            model_folder = obj
+            break
+
+    if not model_folder or not hasattr(model_folder, "Group"):
+        App.Console.PrintError("Could not locate Model folder in the job.\n")
+        return
+
+    # Build list of (clone, source_obj) pairs
+    model_clones = []
+    for child in model_folder.Group:
+        if hasattr(child, "Shape") and child.Shape:
+            source = child.LinkTo if hasattr(child, "LinkTo") and child.LinkTo else child
+            model_clones.append((child, source))
+
+    if not model_clones:
+        App.Console.PrintError("No geometry found in the Model folder.\n")
+        return
+
+    # Use the first model clone as the target geometry
+    model_clone, source_obj = model_clones[0]
+    master_edges = model_clone.Shape.Edges
+
+    App.Console.PrintMessage(
+        "=== SETUP ===\n"
+        "Targeting geometry: '{}' (Source: '{}')\n"
+        "Model clone: '{}'\n"
+        "Clone has {} edges\n"
+        "Source has {} edges\n".format(
+            model_clone.Label, source_obj.Name,
+            model_clone.Name, len(master_edges),
+            len(source_obj.Shape.Edges)
+        )
+    )
+
+    # Step 3: Filter for Z+ top-facing flat planes.
+    # Store (face, normal) pairs so we always use the correct normal later.
+    top_faces = []
+    for face in source_obj.Shape.Faces:
+        u_min, u_max, v_min, v_max = face.ParameterRange
+        u_mid = u_min + (u_max - u_min) / 2.0
+        v_mid = v_min + (v_max - v_min) / 2.0
+        normal = face.normalAt(u_mid, v_mid)
+        if normal.z > 0.99:
+            top_faces.append((face, normal))
+
+    App.Console.PrintMessage("Found {} top faces\n".format(len(top_faces)))
+
+    if not top_faces:
+        App.Console.PrintWarning("No top-facing flat planes found on the model.\n")
+        return
+
+    # Step 4: Prompt the user for Tool, Offset Side, Cut Direction, and LeadInOut settings.
+    settings = show_profile_settings_dialog(job)
+    if not settings:
+        App.Console.PrintWarning("Operation cancelled by user.\n")
+        return
+
+    tool_controller = settings["tool"]
+    offset_side = settings["side"]
+    cut_direction = settings["direction"]
+    leadIn = settings["leadIn"]
+    leadOut = settings["leadOut"]
+    styleIn = settings["styleIn"]
+    styleOut = settings["styleOut"]
+    lengthMultiplier = settings["lengthMultiplier"]
+
+    App.Console.PrintMessage(
+        "Settings: Tool='{}', Side='{}', Direction='{}', LeadIn={}, LeadOut={}, "
+        "StyleIn={}, StyleOut={}, LengthMult={}\n".format(
+            tool_controller.Name, offset_side, cut_direction,
+            leadIn, leadOut, styleIn, styleOut, lengthMultiplier
+        )
+    )
+
+    # Step 5: Get the CommandResources for Profile operations (used for ViewProvider).
+    import Path.Op.Gui.Profile as PathProfileGui
+    res = PathProfileGui.Command.res
+
+    # Step 6: Generate Profile operations for each internal wire loop.
+    op_count = 0
+    closed_loop_count = 0
+    concave_total = 0
+    doc = App.activeDocument()
+
+    # Replace UserInput with a silent chooser to suppress the DlgTCChooser
+    # dialog that FreeCAD normally shows when multiple tool controllers exist.
+    original_UserInput = PathUtils.UserInput
+
+    class SilentToolControllerChooser:
+        def selectedToolController(self):
+            return None
+        def chooseToolController(self, controllers):
+            return tool_controller
+
+    PathUtils.UserInput = SilentToolControllerChooser()
+
+    try:
+        doc.openTransaction("Create Profile Loops")
+
+        for face, normal in top_faces:
+            App.Console.PrintMessage(
+                "  Processing face with normal_z={:.6f}\n".format(normal.z)
+            )
+            outer_hash = face.OuterWire.hashCode()
+            for wire in face.Wires:
+                # Skip the outer perimeter; only process internal loops.
+                if wire.hashCode() == outer_hash:
+                    continue
+                if not wire.isClosed():
+                    continue
+
+                # Match wire edges to master edge names.
+                edge_names = []
+                for edge in wire.Edges:
+                    for idx, master_edge in enumerate(master_edges):
+                        if master_edge.isEqual(edge):
+                            edge_names.append("Edge{}".format(idx + 1))
+                            break
+
+                App.Console.PrintMessage(
+                    "  Wire: {} edges, matched: {}\n".format(
+                        len(wire.Edges), len(edge_names)
+                    )
+                )
+
+                if len(edge_names) < 2:
+                    continue
+
+                op_count += 1
+                closed_loop_count += 1
+                op_name = "Profile_Loop_{}".format(op_count)
+
+                App.Console.PrintMessage(
+                    "=== CREATING {} ===\n".format(op_name)
+                )
+
+                # Create the operation with parentJob context.  This
+                # automatically adds it to the job's Operations folder,
+                # sets up the proxy with job/model/stock references, and
+                # applies default values from the SetupSheet.
+                profile_op = Path.Op.Profile.Create(op_name, parentJob=job)
+                if profile_op is None:
+                    App.Console.PrintError(
+                        "  [CREATE] Profile.Create() returned None for '{}'\n".format(op_name)
+                    )
+                    continue
+                App.Console.PrintMessage(
+                    "  [CREATE] Created op: {}, type={}, hasProxy={}\n".format(
+                        profile_op.Name, type(profile_op).__name__,
+                        hasattr(profile_op, "Proxy")
+                    )
+                )
+
+                App.Console.PrintMessage(
+                    "  After Create:\n"
+                    "    op.Base = {}\n"
+                    "    op.Proxy = {}\n"
+                    "    op.Proxy.job = {}\n".format(
+                        profile_op.Base, profile_op.Proxy,
+                        profile_op.Proxy.job if hasattr(profile_op.Proxy, 'job') else "N/A"
+                    )
+                )
+
+                # Assign ToolController from the user's dialog selection.
+                profile_op.ToolController = tool_controller
+                App.Console.PrintMessage("  ToolController set to {}\n".format(tool_controller.Name))
+
+                # Assign the GUI ViewProvider so the operation renders correctly.
+                profile_op.ViewObject.Proxy = PathOpGui.ViewProvider(profile_op.ViewObject, res)
+
+                # Prevent TaskPanel from clearing Base geometry when setupUi() runs.
+                profile_op.ViewObject.Proxy.setDeleteObjectsOnReject(False)
+
+                # Build the Base property directly using the model clone.
+                # The Base property is a LinkSubListGlobal that stores tuples of
+                # (document_object, [sub_element_names]).
+                base_list = []
+                for edge_name in edge_names:
+                    base_list.append((model_clone, [edge_name]))
+
+                App.Console.PrintMessage(
+                    "  Setting Base = {}\n".format(base_list)
+                )
+                profile_op.Base = base_list
+
+                App.Console.PrintMessage(
+                    "  After assignment:\n"
+                    "    profile_op.Base = {}\n"
+                    "    type(profile_op.Base) = {}\n"
+                    "    len(profile_op.Base) = {}\n".format(
+                        profile_op.Base,
+                        type(profile_op.Base),
+                        len(profile_op.Base) if profile_op.Base else 0
+                    )
+                )
+
+                # Validate each edge exists on the clone.
+                if profile_op.Base:
+                    for base_obj, subs in profile_op.Base:
+                        for sub in subs:
+                            try:
+                                elem = base_obj.Shape.getElement(sub)
+                                App.Console.PrintMessage(
+                                    "    VALID: {} -> {} = {}\n".format(
+                                        base_obj.Name, sub, type(elem).__name__
+                                    )
+                                )
+                            except Exception as e:
+                                App.Console.PrintError(
+                                    "    INVALID: {} -> {} ERROR: {}\n".format(
+                                        base_obj.Name, sub, e
+                                    )
+                                )
+
+                # Apply the user-selected settings (Side, Direction, Offset).
+                profile_op.Direction = cut_direction
+                if offset_side == "None":
+                    profile_op.UseComp = False
+                    profile_op.OffsetExtra.Value = 0.0
+                else:
+                    profile_op.UseComp = True
+                    profile_op.Side = "Inside" if offset_side == "Inside" else "Outside"
+
+                App.Console.PrintMessage(
+                    "  Settings: Side='{}', Direction='{}', UseComp={}\n".format(
+                        profile_op.Side, profile_op.Direction, profile_op.UseComp
+                    )
+                )
+
+                # Configure default depths and heights.
+                profile_op.ClearanceHeight = 5.0
+                profile_op.SafeHeight = 3.0
+                profile_op.StartDepth = 0.0
+                profile_op.StepDown = 1.0
+                profile_op.FinalDepth = -2.0
+
+                # Add DressupLeadInOut after the profile is fully configured.
+                dressup = add_leadinout_dressup(
+                    profile_op,
+                    leadIn=leadIn,
+                    leadOut=leadOut,
+                    styleIn=styleIn,
+                    styleOut=styleOut,
+                    lengthMultiplier=lengthMultiplier
+                )
+                if dressup is not None:
+                    App.Console.PrintMessage(
+                        "  [DRESSUP] Attached to '{}': {}\n".format(op_name, dressup.Name)
+                    )
+                else:
+                    App.Console.PrintError(
+                        "  [DRESSUP] Failed to create dressup for '{}'\n".format(op_name)
+                    )
+
+                App.Console.PrintMessage(
+                    "Created {} linked to {} ({} edges)\n".format(
+                        op_name, source_obj.Name, len(edge_names)
+                    )
+                )
+
+            # Process concave indentations in the outer wire.
+            if settings["concaveDetection"]:
+                App.Console.PrintMessage(
+                    "  [CONCAVE] Processing outer wire of face (normal_z={:.6f})\n".format(
+                        normal.z
+                    )
+                )
+                concave_chains = find_concave_chains(face.OuterWire, normal, settings["concaveDepthTol"])
+                concave_count = len(concave_chains)
+                App.Console.PrintMessage(
+                    "  Outer wire: {} concave indentation chain(s) found\n".format(concave_count)
+                )
+
+                for chain in concave_chains:
+                    try:
+                        # Match chain edges to master edge names.
+                        edge_names = []
+                        for edge in chain:
+                            for idx, master_edge in enumerate(master_edges):
+                                if master_edge.isEqual(edge):
+                                    edge_names.append("Edge{}".format(idx + 1))
+                                    break
+
+                        App.Console.PrintMessage(
+                            "  Concave chain: {} edges, matched: {}\n".format(
+                                len(chain), len(edge_names)
+                            )
+                        )
+
+                        if len(edge_names) < 2:
+                            App.Console.PrintMessage(
+                                "  [CONCAVE] Skipping chain: < 2 matched edges\n"
+                            )
+                            continue
+
+                        # Pre-validation: detect closed loops that FreeCAM will mishandle.
+                        # FreeCAD's wire solver may create a closed wire from concave edges,
+                        # but _processWire() in Profile.py treats it as open and crashes.
+                        import Part
+                        try:
+                            matched_edges = []
+                            for edge_name in edge_names:
+                                elem = model_clone.Shape.getElement(edge_name)
+                                if elem:
+                                    matched_edges.append(elem)
+                            if len(matched_edges) >= 2:
+                                test_wire = Part.Wire(Part.__sortEdges__(matched_edges))
+                                if test_wire.isClosed():
+                                    App.Console.PrintMessage(
+                                        "  [CONCAVE] Skipping chain: forms closed wire "
+                                        "(will be mishandled as open profile)\n"
+                                    )
+                                    continue
+                        except Exception as e:
+                            App.Console.PrintMessage(
+                                "  [CONCAVE] Wire validation failed: {}. Skipping chain.\n".format(e)
+                            )
+                            continue
+
+                        concave_total += 1
+                        op_count += 1
+                        op_name = "Profile_Concave_{}".format(op_count)
+
+                        App.Console.PrintMessage(
+                            "=== CREATING {} ===\n".format(op_name)
+                        )
+
+                        profile_op = Path.Op.Profile.Create(op_name, parentJob=job)
+                        if profile_op is None:
+                            App.Console.PrintError(
+                                "  [CREATE] Profile.Create() returned None for '{}'\n".format(op_name)
+                            )
+                            continue
+                        App.Console.PrintMessage(
+                            "  [CREATE] Created op: {}, type={}, hasProxy={}\n".format(
+                                profile_op.Name, type(profile_op).__name__,
+                                hasattr(profile_op, "Proxy")
+                            )
+                        )
+
+                        App.Console.PrintMessage(
+                            "  After Create:\n"
+                            "    op.Base = {}\n"
+                            "    op.Proxy = {}\n"
+                            "    op.Proxy.job = {}\n".format(
+                                profile_op.Base, profile_op.Proxy,
+                                profile_op.Proxy.job if hasattr(profile_op.Proxy, 'job') else "N/A"
+                            )
+                        )
+
+                        profile_op.ToolController = tool_controller
+                        App.Console.PrintMessage("  ToolController set to {}\n".format(tool_controller.Name))
+
+                        profile_op.ViewObject.Proxy = PathOpGui.ViewProvider(profile_op.ViewObject, res)
+
+                        profile_op.ViewObject.Proxy.setDeleteObjectsOnReject(False)
+
+                        base_list = []
+                        for edge_name in edge_names:
+                            base_list.append((model_clone, [edge_name]))
+
+                        App.Console.PrintMessage(
+                            "  Setting Base = {}\n".format(base_list)
+                        )
+                        profile_op.Base = base_list
+
+                        App.Console.PrintMessage(
+                            "  After assignment:\n"
+                            "    profile_op.Base = {}\n"
+                            "    type(profile_op.Base) = {}\n"
+                            "    len(profile_op.Base) = {}\n".format(
+                                profile_op.Base,
+                                type(profile_op.Base),
+                                len(profile_op.Base) if profile_op.Base else 0
+                            )
+                        )
+
+                        if profile_op.Base:
+                            for base_obj, subs in profile_op.Base:
+                                for sub in subs:
+                                    try:
+                                        elem = base_obj.Shape.getElement(sub)
+                                        App.Console.PrintMessage(
+                                            "    VALID: {} -> {} = {}\n".format(
+                                                base_obj.Name, sub, type(elem).__name__
+                                            )
+                                        )
+                                    except Exception as e:
+                                        App.Console.PrintError(
+                                            "    INVALID: {} -> {} ERROR: {}\n".format(
+                                                base_obj.Name, sub, e
+                                            )
+                                        )
+
+                        profile_op.Direction = cut_direction
+                        if offset_side == "None":
+                            profile_op.UseComp = False
+                            profile_op.OffsetExtra.Value = 0.0
+                        else:
+                            profile_op.UseComp = True
+                            profile_op.Side = "Inside" if offset_side == "Inside" else "Outside"
+
+                        App.Console.PrintMessage(
+                            "  Settings: Side='{}', Direction='{}', UseComp={}\n".format(
+                                profile_op.Side, profile_op.Direction, profile_op.UseComp
+                            )
+                        )
+
+                        profile_op.ClearanceHeight = 5.0
+                        profile_op.SafeHeight = 3.0
+                        profile_op.StartDepth = 0.0
+                        profile_op.StepDown = 1.0
+                        profile_op.FinalDepth = -2.0
+
+                        dressup = add_leadinout_dressup(
+                            profile_op,
+                            leadIn=leadIn,
+                            leadOut=leadOut,
+                            styleIn=styleIn,
+                            styleOut=styleOut,
+                            lengthMultiplier=lengthMultiplier
+                        )
+                        if dressup is not None:
+                            App.Console.PrintMessage(
+                                "  [DRESSUP] Attached to '{}': {}\n".format(op_name, dressup.Name)
+                            )
+                        else:
+                            App.Console.PrintError(
+                                "  [DRESSUP] Failed to create dressup for '{}'\n".format(op_name)
+                            )
+
+                        App.Console.PrintMessage(
+                            "Created {} linked to {} ({} edges)\n".format(
+                                op_name, source_obj.Name, len(edge_names)
+                            )
+                        )
+
+                    except Exception as e:
+                        App.Console.PrintError(
+                            "  [CONCAVE] ERROR processing chain: {}\n".format(e)
+                        )
+                        import traceback
+                        App.Console.PrintError(traceback.format_exc())
+                        continue
+
+        doc.commitTransaction()
+        doc.recompute()
+    finally:
+        # Restore original UserInput so FreeCAD's normal dialog behaviour
+        # is preserved for any subsequent operations.
+        PathUtils.UserInput = original_UserInput
+        Gui.Control.closeDialog()
+
+    # Post-creation verification: print each operation's Base, Side, Direction,
+    # and any dressup that was attached.
+    App.Console.PrintMessage("\n=== POST-CREATION VERIFICATION ===\n")
+    for obj in job.OutList:
+        if obj.Name.startswith("Operations") or obj.Label.startswith("Operations"):
+            for op in obj.Group:
+                if hasattr(op, "Base"):
+                    if "Dressup" in op.Name:
+                        App.Console.PrintMessage(
+                            "Dressup '{}': Base={}, LeadIn={}, LeadOut={}, StyleIn={}, RadiusIn={}\n".format(
+                                op.Name, op.Base, op.LeadIn, op.LeadOut, op.StyleIn, op.RadiusIn
+                            )
+                        )
+                    else:
+                        App.Console.PrintMessage(
+                            "Op '{}': Base = {}, Side={}, Direction={}\n".format(
+                                op.Name, op.Base, op.Side, op.Direction
+                            )
+                        )
+
+    App.Console.PrintMessage(
+        "Finished! Created {} profile operations ({} closed loops, {} concave indentations).\n".format(
+            op_count, closed_loop_count, concave_total
+        )
+    )
+
+
+# Run the macro
+create_profile_ops_for_top_loops()

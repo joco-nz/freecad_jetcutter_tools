@@ -1,0 +1,164 @@
+# ============================================================================
+# same-edges-as-highlighted.FCMacro
+# ============================================================================
+# DESCRIPTION
+#   Finds and selects all edges across visible objects in the active document
+#   that match a template profile of edges (by length and Z-level). This is
+#   useful for selecting matching edges on multiple parts for CAM operations
+#   such as Profile, Contour, or Engrave.
+#
+# USAGE
+#   1. Select the source edges you want to match (on any object in the
+#      document). At least one Edge sub-element must be selected.
+#   2. Run this macro (Macro -> Run Macro -> same-edges-as-highlighted).
+#   3. The macro will:
+#        - Read the selected edges' lengths and average Z-position.
+#        - Clear the current selection.
+#        - Scan all visible Part::Feature objects in the document.
+#        - Select edges that match any of the template edge lengths
+#          AND lie on the same global Z-level (within tolerance).
+#   4. The selected edges can now be used with CAM operations
+#      (Profile, Contour, Engrave, etc.).
+#
+# PREREQUISITES
+#   - A document must be open with Part::Feature objects containing shapes.
+#   - At least one edge must be selected before running the macro.
+#   - The macro only operates on the active document.
+#
+# BEHAVIOUR
+#   - Matching criteria: an edge matches if its length matches any of the
+#     selected template edges' lengths (within tolerance) AND its Z-position
+#     is within tolerance of the average Z-position of the template edges.
+#   - Tolerance: 0.001 mm for both length and Z-level comparison.
+#   - Visibility: only edges on objects that are visible in the tree/3D view
+#     are considered. Objects inside hidden groups (or hidden groups inside
+#     other hidden groups) are excluded.
+#   - Group/container objects (App::DocumentObjectGroup, Part::Group,
+#     App::Part) are skipped entirely — only Part::Feature objects are
+#     scanned for matching edges.
+#   - All matching edges on a given object are selected at once.
+#   - The original selection is cleared before the new selection is built.
+#
+# AUTHOR / DATE
+#   FreeCAD CAM community
+# ============================================================================
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+# Define a tolerance for floating-point comparison (e.g., within 0.001 mm)
+TOLERANCE = 1e-3
+
+def is_effectively_visible(obj, gui_doc, visited=None):
+    if visited is None:
+        visited = set()
+    
+    if obj in visited:
+        return True
+    visited.add(obj)
+    
+    gui_obj = gui_doc.getObject(obj.Name)
+    if gui_obj and hasattr(gui_obj, "Visibility") and not gui_obj.Visibility:
+        return False
+    
+    for ancestor in obj.InList:
+        if not is_effectively_visible(ancestor, gui_doc, visited):
+            return False
+    
+    return True
+
+def select_matching_edges_visible_scene():
+    # Get current selection (supports multiple sub-elements)
+    selection = Gui.Selection.getSelectionEx()
+    
+    if not selection:
+        App.Console.PrintWarning("Please select your source edges first.\n")
+        return
+        
+    # 1. Build a profile of your target selection from the first selected item
+    first_sel = selection[0]
+    sub_elements = first_sel.SubElementNames
+    source_obj = first_sel.Object
+    
+    if not sub_elements:
+        App.Console.PrintWarning("No edges selected.\n")
+        return
+
+    target_edges_data = []
+    target_z_positions = []
+    
+    for sub_name in sub_elements:
+        if not sub_name.startswith("Edge"):
+            continue
+        edge_index = int(sub_name.replace("Edge", "")) - 1
+        edge = source_obj.Shape.Edges[edge_index]
+        
+        target_edges_data.append({
+            'length': edge.Length,
+        })
+        target_z_positions.append(edge.CenterOfMass.z)
+        
+    if not target_edges_data:
+        App.Console.PrintWarning("None of the selected elements are edges.\n")
+        return
+
+    # Calculate average Z level of your target selection to serve as the global plane boundary
+    avg_target_z = sum(target_z_positions) / len(target_z_positions)
+    App.Console.PrintMessage(f"Template profile: {len(target_edges_data)} edges at Global Z-level: {avg_target_z:.4f} mm\n")
+    
+    # Clear current selection to prepare for the global scene selection
+    Gui.Selection.clearSelection()
+    
+    # 2. Scan visible objects in the active document
+    total_matched_count = 0
+    active_doc = App.ActiveDocument
+    gui_doc = Gui.ActiveDocument
+    
+    for obj in active_doc.Objects:
+        # Check 1: Does the object have a valid shape?
+        if not hasattr(obj, "Shape") or obj.Shape.isNull():
+            continue
+        
+        # Check 1b: Skip group/container objects - they don't resolve SubObjects
+        # correctly in the selection layer even though Shape.getElement() works.
+        # Only Part::Feature objects properly populate SubObjects via getSubObject().
+        if obj.isDerivedFrom("App::DocumentObjectGroup"):
+            continue
+        if obj.isDerivedFrom("Part::Group"):
+            continue
+        if obj.isDerivedFrom("App::Part"):
+            continue
+            
+        # Check 2: Is the object visible in the tree/3D view (including all ancestors)?
+        if not is_effectively_visible(obj, gui_doc):
+            continue  # Skip hidden objects
+        
+        matched_edge_names = []
+        matched_on_this_obj = 0
+        
+        for i, edge in enumerate(obj.Shape.Edges):
+            edge_z = edge.CenterOfMass.z
+            
+            # Check 3: Is it on the same global Z plane level?
+            if abs(edge_z - avg_target_z) <= TOLERANCE:
+                
+                # Check 4: Does its length match any edge in your template profile?
+                is_match = False
+                for target in target_edges_data:
+                    if abs(edge.Length - target['length']) <= TOLERANCE:
+                        is_match = True
+                        break
+                
+                if is_match:
+                    matched_edge_names.append(f"Edge{i+1}")
+                    matched_on_this_obj += 1
+                    total_matched_count += 1
+        
+        if matched_on_this_obj > 0:
+            Gui.Selection.addSelection(obj, tuple(matched_edge_names))
+            App.Console.PrintMessage(f"Found {matched_on_this_obj} matching edges in visible object: '{obj.Label}'\n")
+                
+    App.Console.PrintMessage(f"Done! Successfully selected {total_matched_count} matching edges across visible solids.\n")
+
+# Run the function
+select_matching_edges_visible_scene()
