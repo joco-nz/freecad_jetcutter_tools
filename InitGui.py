@@ -7,7 +7,7 @@ import sys
 # Use the known user Mod path for this extension.
 try:
     _initgui_file = __file__
-except AttributeError:
+except NameError:
     _initgui_file = None
 
 if _initgui_file:
