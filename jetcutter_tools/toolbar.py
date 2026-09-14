@@ -4,6 +4,7 @@ import os
 import shutil
 import FreeCAD
 import FreeCADGui
+from PySide.QtCore import QToolBar
 
 TOOLBAR_NAME = "JetCutter Tools"
 
@@ -74,7 +75,7 @@ def _create_toolbar():
     main_window = FreeCADGui.getMainWindow()
 
     # Check if toolbar already exists
-    existing_toolbars = main_window.findChildren("QToolBar")
+    existing_toolbars = main_window.findChildren(QToolBar)
     for tb in existing_toolbars:
         if tb.objectName() == TOOLBAR_NAME:
             return tb
@@ -94,7 +95,7 @@ def _create_toolbar():
 def _remove_toolbar():
     """Remove the JetCutter Tools toolbar."""
     main_window = FreeCADGui.getMainWindow()
-    toolbars = main_window.findChildren("QToolBar")
+    toolbars = main_window.findChildren(QToolBar)
     for tb in toolbars:
         if tb.objectName() == TOOLBAR_NAME:
             main_window.removeToolBar(tb)
