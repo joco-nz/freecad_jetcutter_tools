@@ -23,12 +23,6 @@ if ext_dir not in sys.path:
 import FreeCAD
 import FreeCADGui
 
-# FreeCAD aliases PySide6 as PySide, but fallback if needed
-try:
-    from PySide.QtWidgets import QToolBar
-except ImportError:
-    from PySide6.QtWidgets import QToolBar
-
 _toolbar_created = False
 
 def _ensure_toolbar():
@@ -36,6 +30,12 @@ def _ensure_toolbar():
     if _toolbar_created:
         return
     try:
+        # Import QToolBar inside the function so it's in the local scope
+        try:
+            from PySide.QtWidgets import QToolBar
+        except ImportError:
+            from PySide6.QtWidgets import QToolBar
+
         main_window = FreeCADGui.getMainWindow()
         if not main_window:
             return
