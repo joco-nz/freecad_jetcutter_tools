@@ -10,7 +10,6 @@ if ext_dir not in sys.path:
 
 import FreeCAD
 import FreeCADGui
-from PySide.QtWidgets import QToolBar
 
 # Create toolbar immediately when this module loads
 _toolbar_created = False
@@ -23,7 +22,7 @@ def _ensure_toolbar():
         main_window = FreeCADGui.getMainWindow()
         if not main_window:
             return
-        existing = main_window.findChildren(QToolBar)
+        existing = main_window.findChildren(FreeCADGui.QtWidgets.QToolBar)
         for tb in existing:
             if tb.objectName() == "JetCutter Tools":
                 _toolbar_created = True
