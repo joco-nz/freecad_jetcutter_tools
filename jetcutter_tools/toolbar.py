@@ -4,7 +4,7 @@ import os
 import shutil
 import FreeCAD
 import FreeCADGui
-from PySide.QtCore import QToolBar
+from PySide.QtWidgets import QToolBar
 
 TOOLBAR_NAME = "JetCutter Tools"
 
