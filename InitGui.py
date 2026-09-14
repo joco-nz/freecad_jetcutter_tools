@@ -3,25 +3,26 @@
 import os
 import sys
 
-# Add the extension directory to sys.path
-ext_dir = os.path.expanduser("~/.local/share/FreeCAD/v26-3/Mod/freecad_jetcutter_tools")
+# FreeCAD loads InitGui.py with exec(), so __file__ is not defined.
+# Use the known user Mod path for this extension.
+try:
+    _initgui_file = __file__
+except AttributeError:
+    _initgui_file = None
+
+if _initgui_file:
+    ext_dir = os.path.dirname(os.path.abspath(_initgui_file))
+else:
+    ext_dir = os.path.join(os.path.expanduser("~"),
+                           ".local", "share", "FreeCAD",
+                           "v26-3", "Mod", "freecad_jetcutter_tools")
+
 if ext_dir not in sys.path:
     sys.path.insert(0, ext_dir)
 
 import FreeCAD
 import FreeCADGui
 
-# Import QtWidgets from FreeCADGui's embedded Qt
-try:
-    from FreeCADGui import Qt as QtGui
-    QtWidgets = QtGui.QtWidgets
-except Exception:
-    try:
-        import PySide6.QtWidgets as QtWidgets
-    except Exception:
-        import PySide.QtWidgets as QtWidgets
-
-# Create toolbar immediately when this module loads
 _toolbar_created = False
 
 def _ensure_toolbar():
@@ -32,7 +33,7 @@ def _ensure_toolbar():
         main_window = FreeCADGui.getMainWindow()
         if not main_window:
             return
-        existing = main_window.findChildren(QtWidgets.QToolBar)
+        existing = main_window.findChildren(FreeCADGui.Qt.QToolBar)
         for tb in existing:
             if tb.objectName() == "JetCutter Tools":
                 _toolbar_created = True
