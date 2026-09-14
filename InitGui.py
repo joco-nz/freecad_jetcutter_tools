@@ -4,7 +4,8 @@ import os
 import sys
 
 # Add the extension directory to sys.path so we can import the package
-ext_dir = os.path.dirname(os.path.abspath(__file__))
+_initgui_path = sys.modules[__name__].__file__
+ext_dir = os.path.dirname(os.path.abspath(_initgui_path))
 if ext_dir not in sys.path:
     sys.path.insert(0, ext_dir)
 
