@@ -3,8 +3,7 @@
 import os
 import sys
 
-# FreeCAD loads InitGui.py with __name__ == '__main__', so __file__ is not available.
-# Use the known installation path.
+# Add the extension directory to sys.path
 ext_dir = os.path.expanduser("~/.local/share/FreeCAD/v26-3/Mod/freecad_jetcutter_tools")
 if ext_dir not in sys.path:
     sys.path.insert(0, ext_dir)
@@ -13,32 +12,26 @@ import FreeCAD
 import FreeCADGui
 from PySide.QtWidgets import QToolBar
 
+# Create toolbar immediately when this module loads
+_toolbar_created = False
 
-def _create_toolbar():
-    if hasattr(_create_toolbar, "_installed"):
+def _ensure_toolbar():
+    global _toolbar_created
+    if _toolbar_created:
         return
-    _create_toolbar._installed = True
-
-    main_window = FreeCADGui.getMainWindow()
-    existing = main_window.findChildren(QToolBar)
-    for tb in existing:
-        if tb.objectName() == "JetCutter Tools":
+    try:
+        main_window = FreeCADGui.getMainWindow()
+        if not main_window:
             return
+        existing = main_window.findChildren(QToolBar)
+        for tb in existing:
+            if tb.objectName() == "JetCutter Tools":
+                _toolbar_created = True
+                return
+        from jetcutter_tools import toolbar
+        toolbar.install()
+        _toolbar_created = True
+    except Exception as e:
+        FreeCAD.Console.PrintWarning("JetCutter Tools: %s\n" % str(e))
 
-    from jetcutter_tools import toolbar
-    toolbar.install()
-
-
-class JetCutterToolsWorkbench(FreeCADGui.Workbench):
-    menuText = "JetCutter Tools"
-    toolTip = "JetCutter CAM workflow tools"
-    Icon = ""
-
-    def Initialize(self):
-        _create_toolbar()
-
-    def GetClassName(self):
-        return "Gui::PythonWorkbench"
-
-
-FreeCADGui.addWorkbench(JetCutterToolsWorkbench)
+_ensure_toolbar()
