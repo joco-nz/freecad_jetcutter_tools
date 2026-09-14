@@ -31,7 +31,7 @@ def _get_macro_src_path():
 
 def _get_macro_dst_dir():
     """Return the user's FreeCAD Macro directory."""
-    return FreeCAD.getHomePath("Macro")
+    return os.path.join(FreeCAD.getHomePath(), "Macro")
 
 
 def _copy_macros_to_user_dir():
