@@ -23,7 +23,11 @@ if ext_dir not in sys.path:
 import FreeCAD
 import FreeCADGui
 
-from PySide.QtWidgets import QToolBar
+# FreeCAD aliases PySide6 as PySide, but fallback if needed
+try:
+    from PySide.QtWidgets import QToolBar
+except ImportError:
+    from PySide6.QtWidgets import QToolBar
 
 _toolbar_created = False
 
