@@ -58,44 +58,22 @@ def _remove_macros_from_user_dir():
                 pass
 
 
-class _MacroCommand(FreeCADGui.Command):
-    """A Gui.Command that runs a FreeCAD macro file."""
-
-    def __init__(self, macro_path):
-        super(_MacroCommand, self).__init__(macro_path)
-        self.macro_path = macro_path
-
-    def Activated(self):
-        FreeCADGui.runMacro(self.macro_path)
-
-    def IsEnabled(self):
-        return bool(FreeCAD.ActiveDocument)
-
-    def GetIcon(self):
-        return []
-
-
-def _register_commands():
-    """Register all macro commands with FreeCAD."""
+def _run_macro(macro_name):
+    """Callback for toolbar button - runs the named macro."""
     macro_dir = _get_macro_dst_dir()
     for m in MACROS:
-        cmd = _MacroCommand(os.path.join(macro_dir, m["macro"]))
-        FreeCADGui.addCommand(m["name"], cmd)
-
-
-def _unregister_commands():
-    """Unregister all macro commands from FreeCAD."""
-    for m in MACROS:
-        try:
-            FreeCADGui.removeCommand(m["name"])
-        except Exception:
-            pass
+        if m["name"] == macro_name:
+            path = os.path.join(macro_dir, m["macro"])
+            if os.path.exists(path):
+                FreeCADGui.runMacro(path)
+            return
 
 
 def _create_toolbar():
     """Create the JetCutter Tools toolbar with buttons for each macro."""
-    # Check if toolbar already exists
     main_window = FreeCADGui.getMainWindow()
+
+    # Check if toolbar already exists
     existing_toolbars = main_window.findChildren("QToolBar")
     for tb in existing_toolbars:
         if tb.objectName() == TOOLBAR_NAME:
@@ -106,10 +84,9 @@ def _create_toolbar():
     toolbar.setToolTip("JetCutter CAM workflow tools")
 
     for m in MACROS:
-        toolbar.addAction(m["text"])
-        # Connect button click to command
-        cmd = FreeCADGui.Command(m["name"])
-        toolbar.actionList()[-1].triggered.connect(cmd.Activated)
+        action = toolbar.addAction(m["text"])
+        action.setToolTip(m["tooltip"])
+        action.triggered.connect(lambda checked, name=m["name"]: _run_macro(name))
 
     return toolbar
 
@@ -126,32 +103,20 @@ def _remove_toolbar():
 
 
 def install():
-    """Install the extension: copy macros, register commands, create toolbar."""
+    """Install the extension: copy macros, create toolbar."""
     FreeCAD.Console.PrintMessage("Installing JetCutter Tools extension...\n")
 
-    # Copy macros to user's Macro directory
     _copy_macros_to_user_dir()
-
-    # Register commands
-    _register_commands()
-
-    # Create toolbar
     _create_toolbar()
 
     FreeCAD.Console.PrintMessage("JetCutter Tools extension installed.\n")
 
 
 def uninstall():
-    """Uninstall the extension: remove toolbar, unregister commands, clean up."""
+    """Uninstall the extension: remove toolbar, clean up."""
     FreeCAD.Console.PrintMessage("Uninstalling JetCutter Tools extension...\n")
 
-    # Remove toolbar
     _remove_toolbar()
-
-    # Unregister commands
-    _unregister_commands()
-
-    # Remove macros from user's Macro directory
     _remove_macros_from_user_dir()
 
     FreeCAD.Console.PrintMessage("JetCutter Tools extension uninstalled.\n")
