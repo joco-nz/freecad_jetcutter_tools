@@ -22,11 +22,10 @@ class JetCutterToolsWorkbench(FreeCADGui.Workbench):
     toolTip = "JetCutter CAM workflow tools"
 
     def Initialize(self):
-        """Register commands and toolbar."""
+        """Register commands and start CAM workbench polling."""
         FreeCADGui.addCommand('JetCutter_SameEdges', commands.SameEdgesAsHighlighted())
         FreeCADGui.addCommand('JetCutter_FindProfiles', commands.FindProfiles())
 
-        toolbar._create_toolbar()
         toolbar._start_cam_polling()
 
     def GetClassName(self):

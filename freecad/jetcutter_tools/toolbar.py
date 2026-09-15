@@ -79,9 +79,11 @@ def _start_cam_polling():
 
 
 def _check_cam_active():
-    """Check if CAM workbench is active and show/hide toolbar accordingly."""
+    """Check if CAM workbench is active, create toolbar if needed, and show/hide accordingly."""
     wb = FreeCADGui.activeWorkbench()
     if wb and wb.name() == "CAMWorkbench":
+        if _toolbar is None:
+            _create_toolbar()
         _show_toolbar()
     else:
         _hide_toolbar()
