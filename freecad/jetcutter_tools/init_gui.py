@@ -1,13 +1,12 @@
-"""InitGui.py - FreeCAD workbench definition for JetCutter Tools."""
+"""init_gui.py - FreeCAD workbench definition for JetCutter Tools."""
 
 import os
 
 import FreeCADGui
-from jetcutter_tools import commands
-from jetcutter_tools import toolbar
+from . import commands
+from . import toolbar
 
-ICON_DIR = os.path.dirname(os.path.abspath(__file__))
-MACROS_DIR = os.path.join(ICON_DIR, "macros")
+ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'Resources', 'Icons')
 
 
 class JetCutterToolsWorkbench(FreeCADGui.Workbench):
@@ -20,7 +19,6 @@ class JetCutterToolsWorkbench(FreeCADGui.Workbench):
     def Initialize(self):
         """Register icon paths, commands, and toolbar."""
         FreeCADGui.addIconPath(ICON_DIR)
-        FreeCADGui.addIconPath(MACROS_DIR)
 
         FreeCADGui.addCommand('JetCutter_SameEdges', commands.SameEdgesAsHighlighted())
         FreeCADGui.addCommand('JetCutter_FindProfiles', commands.FindProfiles())
