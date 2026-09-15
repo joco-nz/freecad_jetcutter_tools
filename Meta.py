@@ -1,7 +1,7 @@
 # Meta.py - FreeCAD Extension metadata
 
 Meta = {
-    "author": "FreeCAD CAM community",
+    "author": "James Walker",
     "version": (1, 1, 0),
     "weekmap": "2026.09",
     "app": "Main",

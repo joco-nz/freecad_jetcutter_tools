@@ -1,44 +1,32 @@
 """JetCutter Tools toolbar - creates a FreeCAD toolbar with command buttons."""
 
-import os
-
 import FreeCADGui
-
-ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "macros")
-
-ICON_FILES = {
-    "JetCutter_SameEdges": os.path.join(ICON_DIR, "same-edges-as-highlighted.svg"),
-    "JetCutter_FindProfiles": os.path.join(ICON_DIR, "FindProfiles.svg"),
-}
+from PySide.QtCore import QTimer
 
 TOOLBAR_NAME = "JetCutter Tools"
 
 COMMANDS = [
     {
         "name": "JetCutter_SameEdges",
+        "icon": "same-edges-as-highlighted",
         "text": "Same Edges As Highlighted",
         "tooltip": "Select all edges matching the length and Z-level of highlighted edges",
     },
     {
         "name": "JetCutter_FindProfiles",
+        "icon": "FindProfiles",
         "text": "Find Profiles",
         "tooltip": "Create Profile operations for internal edges on CAM Job top faces",
     },
 ]
 
+_toolbar = None
+_cam_timer = None
+
 
 def _run_command(command_name):
     """Callback for toolbar button - runs the named FreeCAD command."""
     FreeCADGui.runCommand(command_name)
-
-
-def _load_icon(filepath):
-    """Load an SVG file as a QIcon."""
-    try:
-        from PySide import QtGui
-    except ImportError:
-        from PySide6 import QtGui
-    return QtGui.QIcon(filepath)
 
 
 def _create_toolbar():
@@ -48,39 +36,59 @@ def _create_toolbar():
     except ImportError:
         from PySide6.QtWidgets import QToolBar
 
+    global _toolbar
+
     main_window = FreeCADGui.getMainWindow()
 
     existing_toolbars = main_window.findChildren(QToolBar)
     for tb in existing_toolbars:
         if tb.objectName() == TOOLBAR_NAME:
-            return tb
+            _toolbar = tb
+            return _toolbar
 
-    toolbar = main_window.addToolBar(TOOLBAR_NAME)
-    toolbar.setObjectName(TOOLBAR_NAME)
-    toolbar.setToolTip("JetCutter CAM workflow tools")
+    _toolbar = main_window.addToolBar(TOOLBAR_NAME)
+    _toolbar.setObjectName(TOOLBAR_NAME)
+    _toolbar.setToolTip("JetCutter CAM workflow tools")
+    _toolbar.setVisible(False)
 
     for cmd in COMMANDS:
-        icon = _load_icon(ICON_FILES.get(cmd["name"], ""))
-        action = toolbar.addAction(icon, cmd["text"])
+        icon = FreeCADGui.addIcon(cmd["icon"])
+        action = _toolbar.addAction(icon, cmd["text"])
         action.setToolTip(cmd["tooltip"])
         action.triggered.connect(
             lambda checked, name=cmd["name"]: _run_command(name)
         )
 
-    return toolbar
+    return _toolbar
 
 
-def _remove_toolbar():
-    """Remove the JetCutter Tools toolbar."""
-    try:
-        from PySide.QtWidgets import QToolBar
-    except ImportError:
-        from PySide6.QtWidgets import QToolBar
+def _start_cam_polling():
+    """Start a timer that polls for CAM workbench activation."""
+    global _cam_timer
 
-    main_window = FreeCADGui.getMainWindow()
-    toolbars = main_window.findChildren(QToolBar)
-    for tb in toolbars:
-        if tb.objectName() == TOOLBAR_NAME:
-            main_window.removeToolBar(tb)
-            tb.deleteLater()
-            break
+    _cam_timer = QTimer()
+    _cam_timer.timeout.connect(_check_cam_active)
+    _cam_timer.start(500)
+
+
+def _check_cam_active():
+    """Check if CAM workbench is active and show/hide toolbar accordingly."""
+    wb = FreeCADGui.activeWorkbench()
+    if wb and wb.name() == "CAM":
+        _show_toolbar()
+    else:
+        _hide_toolbar()
+
+
+def _show_toolbar():
+    """Show the JetCutter Tools toolbar."""
+    global _toolbar
+    if _toolbar is not None and not _toolbar.isVisible():
+        _toolbar.setVisible(True)
+
+
+def _hide_toolbar():
+    """Hide the JetCutter Tools toolbar."""
+    global _toolbar
+    if _toolbar is not None and _toolbar.isVisible():
+        _toolbar.setVisible(False)
