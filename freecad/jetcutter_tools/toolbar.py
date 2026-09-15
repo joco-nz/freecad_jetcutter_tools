@@ -80,15 +80,8 @@ def _start_cam_polling():
 
 def _check_cam_active():
     """Check if CAM workbench is active and show/hide toolbar accordingly."""
-    import FreeCAD as _App
-
     wb = FreeCADGui.activeWorkbench()
-    wb_name = wb.name() if wb else "<None>"
-    _App.Console.PrintMessage(
-        f"[JetCutter] activeWorkbench.name()='{wb_name}', "
-        f"toolbar.visible={_toolbar.isVisible() if _toolbar else '<toolbar is None>'}\n"
-    )
-    if wb and wb_name == "CAM":
+    if wb and wb.name() == "CAMWorkbench":
         _show_toolbar()
     else:
         _hide_toolbar()
