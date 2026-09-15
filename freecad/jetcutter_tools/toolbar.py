@@ -1,7 +1,5 @@
 """JetCutter Tools toolbar - creates a FreeCAD toolbar with command buttons."""
 
-import os
-
 import FreeCADGui
 from PySide.QtCore import QTimer
 
@@ -9,8 +7,6 @@ try:
     from PySide import QtGui
 except ImportError:
     from PySide6 import QtGui
-
-ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'Resources', 'Icons')
 
 TOOLBAR_NAME = "JetCutter Tools"
 
@@ -61,8 +57,9 @@ def _create_toolbar():
     _toolbar.setVisible(False)
 
     for cmd in COMMANDS:
-        icon_path = os.path.join(ICON_DIR, cmd["icon"] + ".svg")
-        icon = QtGui.QIcon(icon_path)
+        icon = FreeCADGui.getIcon(cmd["icon"])
+        if icon is None:
+            icon = QtGui.QIcon()
         action = _toolbar.addAction(icon, cmd["text"])
         action.setToolTip(cmd["tooltip"])
         action.triggered.connect(
