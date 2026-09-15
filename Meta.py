@@ -13,18 +13,4 @@ Meta = {
     "has_python": True,
     "hide": False,
     "can_be_disabled": True,
-    "install": [
-        {
-            "type": "action",
-            "action": "import sys, os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import jetcutter_tools.toolbar; jetcutter_tools.toolbar.install()",
-            "enabled": True,
-        },
-    ],
-    "uninstall": [
-        {
-            "type": "action",
-            "action": "import sys, os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import jetcutter_tools.toolbar; jetcutter_tools.toolbar.uninstall()",
-            "enabled": True,
-        },
-    ],
 }

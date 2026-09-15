@@ -1,10 +1,8 @@
-"""InitGui.py - Loaded by FreeCAD on startup to create the toolbar."""
+"""InitGui.py - Loaded by FreeCAD on startup to register the workbench."""
 
 import os
 import sys
 
-# FreeCAD loads InitGui.py with exec(), so __file__ is not defined.
-# Use the known user Mod path for this extension.
 try:
     _initgui_file = __file__
 except NameError:
@@ -20,34 +18,7 @@ else:
 if ext_dir not in sys.path:
     sys.path.insert(0, ext_dir)
 
-import FreeCAD
 import FreeCADGui
+from jetcutter_tools.InitGui import JetCutterToolsWorkbench
 
-_toolbar_created = False
-
-def _ensure_toolbar():
-    global _toolbar_created
-    if _toolbar_created:
-        return
-    try:
-        # Import QToolBar inside the function so it's in the local scope
-        try:
-            from PySide.QtWidgets import QToolBar
-        except ImportError:
-            from PySide6.QtWidgets import QToolBar
-
-        main_window = FreeCADGui.getMainWindow()
-        if not main_window:
-            return
-        existing = main_window.findChildren(QToolBar)
-        for tb in existing:
-            if tb.objectName() == "JetCutter Tools":
-                _toolbar_created = True
-                return
-        from jetcutter_tools import toolbar
-        toolbar.install()
-        _toolbar_created = True
-    except Exception as e:
-        FreeCAD.Console.PrintWarning("JetCutter Tools: %s\n" % str(e))
-
-_ensure_toolbar()
+FreeCADGui.addWorkbench(JetCutterToolsWorkbench)
