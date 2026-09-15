@@ -1,7 +1,16 @@
 """GuiCommand classes for JetCutter Tools."""
 
+import os
+
 import FreeCAD as App
 import FreeCADGui as Gui
+
+ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "macros")
+
+ICON_PATHS = {
+    "same-edges-as-highlighted": os.path.join(ICON_DIR, "same-edges-as-highlighted.svg"),
+    "find-profiles": os.path.join(ICON_DIR, "FindProfiles.svg"),
+}
 
 
 # ============================================================================
@@ -110,7 +119,7 @@ class SameEdgesAsHighlighted:
 
     def GetResources(self):
         return {
-            'Pixmap': 'same-edges-as-highlighted',
+            'Pixmap': ICON_PATHS['same-edges-as-highlighted'],
             'MenuText': 'Same Edges As Highlighted',
             'ToolTip': 'Select all edges matching the length and Z-level of highlighted edges',
         }
@@ -160,7 +169,7 @@ class FindProfiles:
 
     def GetResources(self):
         return {
-            'Pixmap': 'find-profiles',
+            'Pixmap': ICON_PATHS['find-profiles'],
             'MenuText': 'Find Profiles',
             'ToolTip': 'Create Profile operations for internal edges on CAM Job top faces',
         }

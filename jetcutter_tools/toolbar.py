@@ -20,8 +20,7 @@ COMMANDS = [
 
 def _run_command(command_name):
     """Callback for toolbar button - runs the named FreeCAD command."""
-    FreeCADGui.doCommand(f"Gui.activateCommand('{command_name}')")
-    FreeCADGui.SendMsgToActiveView("Activate")
+    FreeCADGui.runCommand(command_name)
 
 
 def _create_toolbar():
