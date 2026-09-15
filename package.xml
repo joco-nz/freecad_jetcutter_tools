@@ -16,7 +16,7 @@
 
     <!--[ Dependencies ]-->
 
-    <depend type="internal">path</depend>
+    <depend type="internal">cam</depend>
 
     <!--[ Tags ]-->
 
@@ -44,9 +44,9 @@
 
     <!--[ Urls ]-->
 
-    <url type="repository">https://github.com/jameswalkerdev/freecad_jetcutter_tools</url>
-    <url type="bugtracker">https://github.com/jameswalkerdev/freecad_jetcutter_tools/issues</url>
-    <url type="readme">https://raw.githubusercontent.com/jameswalkerdev/freecad_jetcutter_tools/refs/heads/main/README.md</url>
+    <url type="repository">https://github.com/joco-nz/freecad_jetcutter_tools</url>
+    <url type="bugtracker">https://github.com/joco-nz/freecad_jetcutter_tools/issues</url>
+    <url type="readme">https://raw.githubusercontent.com/joco-nz/freecad_jetcutter_tools/refs/heads/main/README.md</url>
 
     <!--[ Content ]-->
 
