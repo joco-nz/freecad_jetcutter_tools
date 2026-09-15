@@ -8,6 +8,11 @@ from . import toolbar
 
 ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'Resources', 'Icons')
 
+# Register icon path at module level, BEFORE addWorkbench() is called below.
+# The workbench Icon is loaded during addWorkbench(), so the path must be
+# registered before that call.
+FreeCADGui.addIconPath(ICON_DIR)
+
 
 class JetCutterToolsWorkbench(FreeCADGui.Workbench):
     """Lightweight workbench providing CAM workflow tools."""
@@ -17,9 +22,7 @@ class JetCutterToolsWorkbench(FreeCADGui.Workbench):
     toolTip = "JetCutter CAM workflow tools"
 
     def Initialize(self):
-        """Register icon paths, commands, and toolbar."""
-        FreeCADGui.addIconPath(ICON_DIR)
-
+        """Register commands and toolbar."""
         FreeCADGui.addCommand('JetCutter_SameEdges', commands.SameEdgesAsHighlighted())
         FreeCADGui.addCommand('JetCutter_FindProfiles', commands.FindProfiles())
 
