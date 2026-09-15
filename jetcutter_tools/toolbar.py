@@ -1,6 +1,15 @@
 """JetCutter Tools toolbar - creates a FreeCAD toolbar with command buttons."""
 
+import os
+
 import FreeCADGui
+
+ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "macros")
+
+ICON_FILES = {
+    "JetCutter_SameEdges": os.path.join(ICON_DIR, "same-edges-as-highlighted.svg"),
+    "JetCutter_FindProfiles": os.path.join(ICON_DIR, "FindProfiles.svg"),
+}
 
 TOOLBAR_NAME = "JetCutter Tools"
 
@@ -23,6 +32,15 @@ def _run_command(command_name):
     FreeCADGui.runCommand(command_name)
 
 
+def _load_icon(filepath):
+    """Load an SVG file as a QIcon."""
+    try:
+        from PySide import QtGui
+    except ImportError:
+        from PySide6 import QtGui
+    return QtGui.QIcon(filepath)
+
+
 def _create_toolbar():
     """Create the JetCutter Tools toolbar with buttons for each command."""
     try:
@@ -42,7 +60,8 @@ def _create_toolbar():
     toolbar.setToolTip("JetCutter CAM workflow tools")
 
     for cmd in COMMANDS:
-        action = toolbar.addAction(cmd["text"])
+        icon = _load_icon(ICON_FILES.get(cmd["name"], ""))
+        action = toolbar.addAction(icon, cmd["text"])
         action.setToolTip(cmd["tooltip"])
         action.triggered.connect(
             lambda checked, name=cmd["name"]: _run_command(name)
