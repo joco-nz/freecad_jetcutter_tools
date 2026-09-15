@@ -2,7 +2,7 @@
 
 Meta = {
     "author": "FreeCAD CAM community",
-    "version": (1, 0, 0),
+    "version": (1, 1, 0),
     "weekmap": "2026.09",
     "app": "Main",
     "icon": "",
